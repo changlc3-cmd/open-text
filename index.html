@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>即時互動：任意文字 × 文字雲</title>
+<title>即時互動：任意文字 × 文字雲 × 選擇題</title>
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/wordcloud@1.2.2/src/wordcloud2.js"></script>
@@ -58,6 +58,23 @@
   .card.pin{background:var(--accent-soft);border-color:var(--accent)}
   @keyframes pop{from{transform:scale(.92);opacity:0}to{transform:none;opacity:1}}
 
+  /* 選擇題 */
+  #choiceBox{position:absolute;inset:0;overflow:auto;padding-bottom:20px}
+  .mc{padding:8px 24px 0;display:flex;flex-direction:column;gap:12px}
+  .mc-row{display:grid;grid-template-columns:56px 1fr 96px;gap:16px;align-items:center;background:var(--bg);border:2px solid var(--line);border-radius:14px;padding:12px 16px;transition:border-color .2s,background .2s}
+  .mc-row.correct{border-color:var(--ok);background:#e9f7ef}
+  .mc-letter{width:56px;height:56px;border-radius:12px;border:0;font-size:26px;font-weight:900;color:#fff;background:var(--c);position:relative}
+  .mc-row.correct .mc-letter::after{content:'✓';position:absolute;right:-8px;top:-8px;width:24px;height:24px;border-radius:50%;background:var(--ok);color:#fff;font-size:14px;display:grid;place-items:center;border:2px solid #fff}
+  .mc-text{width:100%;border:0;background:transparent;font:inherit;font-size:clamp(17px,1.8vw,26px);font-weight:700;color:var(--ink);outline:none;padding:2px 0 8px;border-bottom:1px dashed transparent}
+  .mc-text:focus{border-bottom-color:#c9cdd8}
+  .mc-text::placeholder{color:#b6bbca}
+  .mc-bar{height:14px;background:#e3e6ee;border-radius:999px;overflow:hidden}
+  .mc-bar i{display:block;height:100%;width:0;background:var(--c);border-radius:999px;transition:width .5s ease}
+  .mc-num{text-align:right}
+  .mc-num b{display:block;font-size:30px;font-weight:900;line-height:1.1}
+  .mc-num span{font-size:13px;color:var(--muted)}
+  .mc-tools{display:flex;gap:8px;flex-wrap:wrap;padding:16px 24px 0}
+
   aside{display:flex;flex-direction:column;gap:12px;min-height:0;overflow:auto}
   .box{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
   .qr-wrap{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}
@@ -107,6 +124,13 @@
   .g-send:disabled{opacity:.45;cursor:not-allowed}
   .g-status{text-align:center;padding:26px 6px;color:var(--muted);font-size:16px;line-height:1.7}
   .g-status b{display:block;font-size:42px;margin-bottom:6px}
+  .g-choices{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}
+  .g-opt{display:flex;align-items:center;gap:12px;width:100%;text-align:left;border:2px solid var(--line);background:#fff;border-radius:12px;padding:12px 14px;font-size:17px;color:var(--ink);line-height:1.4}
+  .g-opt b{flex:none;width:38px;height:38px;border-radius:9px;display:grid;place-items:center;color:#fff;background:var(--c);font-weight:900;font-size:18px}
+  .g-opt.sel{border-color:var(--c);box-shadow:0 0 0 3px var(--accent-soft);background:var(--accent-soft)}
+  .g-answer{margin-top:14px;font-size:16px;color:var(--ink);line-height:1.8}
+  .g-answer .right{color:var(--ok);font-weight:800}
+  .g-answer .wrong{color:var(--danger);font-weight:800}
   .g-msg{min-height:22px;text-align:center;font-size:14px;margin-top:10px}
   .g-msg.ok{color:var(--ok)} .g-msg.err{color:var(--danger)}
 </style>
@@ -118,8 +142,9 @@
   <header>
     <div class="brand"><span class="live-dot" id="liveDot"></span>LIVE POLL</div>
     <div class="seg" role="tablist">
-      <button data-mode="opentext">任意文字 Open Text</button>
-      <button data-mode="wordcloud" class="active">文字雲 Word Cloud</button>
+      <button data-mode="opentext">任意文字</button>
+      <button data-mode="wordcloud" class="active">文字雲</button>
+      <button data-mode="choice">選擇題</button>
     </div>
     <div class="toggles">
       <button class="chip" id="tMulti">允許多次送出</button>
@@ -135,6 +160,15 @@
       <div class="viz">
         <div id="cloudBox"><canvas id="cloud"></canvas></div>
         <div id="textBox" class="hidden"><div class="cards" id="cards"></div></div>
+        <div id="choiceBox" class="hidden">
+          <div class="mc" id="mc"></div>
+          <div class="mc-tools hide-fs">
+            <button class="chip" id="mcAdd">＋ 新增選項</button>
+            <button class="chip" id="mcDel">－ 移除最後一個選項</button>
+            <button class="chip" id="mcHide">隱藏結果</button>
+            <button class="chip" id="mcNext">➜ 下一題（清空票數）</button>
+          </div>
+        </div>
         <div class="empty" id="empty"><b>⌁</b>等待參與者掃描 QR Code 作答…</div>
       </div>
     </section>
@@ -177,13 +211,16 @@
         <input class="g-name" id="gName" maxlength="20" placeholder="不填則顯示為「匿名」" autocomplete="nickname">
         <label class="g-label" for="gInput">你的回覆</label>
       </div>
-      <textarea class="g-input" id="gInput" rows="1"></textarea>
-      <div class="g-meta"><span id="gHint"></span><span id="gCount">0/0</span></div>
+      <div id="gChoices" class="g-choices hidden"></div>
+      <div id="gTextWrap">
+        <textarea class="g-input" id="gInput" rows="1"></textarea>
+        <div class="g-meta"><span id="gHint"></span><span id="gCount">0/0</span></div>
+      </div>
       <button class="g-send" id="gSend" disabled>送出</button>
       <div class="g-msg" id="gMsg"></div>
     </div>
     <div id="gLocked" class="g-status hidden"><b>🔒</b>主持人暫停作答中<br>請稍候…</div>
-    <div id="gDone" class="g-status hidden"><b>✅</b>已收到你的回覆，謝謝！<br>請看大螢幕。</div>
+    <div id="gDone" class="g-status hidden"><b>✅</b>已收到你的回覆，謝謝！<br>請看大螢幕。<div id="gAnswer" class="g-answer"></div></div>
     <div id="gFail" class="g-status hidden"><b>⚠️</b><span id="gFailText">找不到這個房間，請確認 QR Code 或房間代碼。</span></div>
   </div>
 </div>
@@ -194,8 +231,10 @@
 (() => {
   'use strict';
   const PREFIX = 'otwc-room-';           // PeerJS ID 前綴，避免和別人撞號
-  const LIMIT = { wordcloud: 20, opentext: 200 };
-  const MODE_NAME = { wordcloud: '文字雲', opentext: '任意文字' };
+  const LIMIT = { wordcloud: 20, opentext: 200, choice: 0 };
+  const MODE_NAME = { wordcloud: '文字雲', opentext: '任意文字', choice: '選擇題' };
+  const LETTERS = 'ABCDEF';
+  const OPT_COLORS = ['#2f5bff','#e5484d','#f59e0b','#1f9d55','#8b5cf6','#0ea5e9'];
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const toast = msg => { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 1800); };
@@ -217,12 +256,15 @@
 
     const state = {
       mode: 'wordcloud',
-      questions: { wordcloud: '用一個詞形容今天的心情', opentext: '有什麼問題或想法想分享？' },
+      questions: { wordcloud: '用一個詞形容今天的心情', opentext: '有什麼問題或想法想分享？', choice: '你最想深入學習哪個主題？' },
+      options: ['AI 工具應用', '資料分析', '簡報設計', '程式入門'],
+      correct: -1,
+      hideResults: false,
       locked: false,
       multi: false
     };
-    const entries = { wordcloud: [], opentext: [] };
-    const submitted = { wordcloud: new Set(), opentext: new Set() };
+    const entries = { wordcloud: [], opentext: [], choice: [] };
+    const submitted = { wordcloud: new Set(), opentext: new Set(), choice: new Set() };
     const conns = new Set();
     let peer = null, code = '', seq = 0;
 
@@ -264,7 +306,7 @@
     function updateOnline(){ $('nOnline').textContent = conns.size; }
 
     function publicState(){
-      return { type: 'state', mode: state.mode, question: state.questions[state.mode], locked: state.locked, multi: state.multi, max: LIMIT[state.mode] };
+      return { type: 'state', mode: state.mode, question: state.questions[state.mode], locked: state.locked, multi: state.multi, max: LIMIT[state.mode], options: state.options, correct: state.correct };
     }
     function sendState(conn){ if (conn.open) conn.send(publicState()); }
     function broadcast(){ const s = publicState(); conns.forEach(c => { if (c.open) c.send(s); }); }
@@ -275,6 +317,15 @@
       const reply = (ok, reason) => conn.open && conn.send({ type: 'ack', ok, reason, mode });
       if (state.locked) return reply(false, 'locked');
       if (d.mode && d.mode !== mode) { sendState(conn); return reply(false, 'mode'); }
+      if (mode === 'choice') {
+        const c = parseInt(d.choice, 10);
+        if (!(c >= 0 && c < state.options.length)) return reply(false, 'empty');
+        const ccid = String(d.cid || conn.peer);
+        if (!state.multi && submitted.choice.has(ccid)) return reply(false, 'already');
+        submitted.choice.add(ccid);
+        entries.choice.push({ id: ++seq, choice: c, cid: ccid, t: Date.now() });
+        reply(true); render(); return;
+      }
       let text = String(d.text || '').replace(/\s+/g, ' ').trim();
       if (mode === 'opentext') text = String(d.text || '').trim().replace(/\n{3,}/g, '\n\n');
       if (!text) return reply(false, 'empty');
@@ -297,10 +348,14 @@
       $('question').textContent = state.questions[m];
       $('cloudBox').classList.toggle('hidden', m !== 'wordcloud');
       $('textBox').classList.toggle('hidden', m !== 'opentext');
+      $('choiceBox').classList.toggle('hidden', m !== 'choice');
+      if (m === 'choice') buildChoice();
       $('bPng').classList.toggle('hidden', m !== 'wordcloud');
-      $('tip').innerHTML = m === 'wordcloud'
-        ? '💡 點擊文字雲上的詞即可刪除該詞。相同的詞（不分大小寫）會合併計數，次數越多字越大。每則限 ' + LIMIT.wordcloud + ' 字。'
-        : '💡 滑過卡片按 × 可刪除，點卡片可標記重點。每則限 ' + LIMIT.opentext + ' 字。';
+      $('tip').innerHTML = {
+        wordcloud: '💡 點擊文字雲上的詞即可刪除該詞。相同的詞（不分大小寫）會合併計數，次數越多字越大。每則限 ' + LIMIT.wordcloud + ' 字。',
+        opentext: '💡 滑過卡片按 × 可刪除，點卡片可標記重點。每則限 ' + LIMIT.opentext + ' 字。',
+        choice: '💡 選項文字可直接點擊編輯（2–6 個選項）。點左側字母可標示／取消正確答案，已作答者的手機會顯示對錯，建議收齊答案後再標示。'
+      }[m];
       broadcast(); render(true);
     }
 
@@ -336,10 +391,14 @@
 
     $('bClear').addEventListener('click', () => {
       if (!confirm('確定清除「' + MODE_NAME[state.mode] + '」的所有回覆？')) return;
-      entries[state.mode] = []; submitted[state.mode].clear();
-      conns.forEach(c => c.open && c.send({ type: 'reset', mode: state.mode }));
-      render(true);
+      clearMode(state.mode);
     });
+    function clearMode(m){
+      entries[m] = []; submitted[m].clear();
+      if (m === 'choice') { state.correct = -1; buildChoice(); broadcast(); }
+      conns.forEach(c => c.open && c.send({ type: 'reset', mode: m }));
+      render(true);
+    }
     $('bNew').addEventListener('click', () => {
       if (!confirm('開新房間會產生新的 QR Code，目前的參與者需要重新掃描。確定？')) return;
       openRoom();
@@ -347,7 +406,14 @@
     $('bCsv').addEventListener('click', () => {
       const m = state.mode, rows = [m === 'opentext' ? ['模式','題目','時間','暱稱','內容'] : ['模式','題目','時間','內容']];
       const q = state.questions[m];
-      entries[m].forEach(e => rows.push(m === 'opentext'
+      if (m === 'choice') {
+        rows[0] = ['模式','題目','時間','選項','選項內容'];
+        entries.choice.forEach(e => rows.push([MODE_NAME[m], q, new Date(e.t).toLocaleString('zh-TW'), LETTERS[e.choice], state.options[e.choice] || '']));
+        rows.push([]); rows.push(['選項','內容','票數','百分比','正確答案']);
+        const cnt = choiceCounts(), tot = entries.choice.length;
+        state.options.forEach((o, i) => rows.push([LETTERS[i], o, cnt[i], tot ? Math.round(cnt[i] / tot * 1000) / 10 + '%' : '0%', state.correct === i ? '✓' : '']));
+      }
+      if (m !== 'choice') entries[m].forEach(e => rows.push(m === 'opentext'
         ? [MODE_NAME[m], q, new Date(e.t).toLocaleString('zh-TW'), e.name || '匿名', e.text]
         : [MODE_NAME[m], q, new Date(e.t).toLocaleString('zh-TW'), e.text]));
       if (m === 'wordcloud') {
@@ -389,8 +455,9 @@
     function render(force){
       const m = state.mode, n = entries[m].length;
       $('nResp').textContent = n;
-      $('empty').classList.toggle('hidden', n > 0);
-      if (m === 'opentext') renderCards();
+      $('empty').classList.toggle('hidden', n > 0 || m === 'choice');
+      if (m === 'choice') updateChoice();
+      else if (m === 'opentext') renderCards();
       else { clearTimeout(rTimer); rTimer = setTimeout(() => renderCloud(force), force ? 0 : 250); }
     }
 
@@ -457,6 +524,79 @@
       if (card) { const id = +card.dataset.id; pinned.has(id) ? pinned.delete(id) : pinned.add(id); card.classList.toggle('pin'); }
     });
 
+    /* ---------- 選擇題 ---------- */
+    function choiceCounts(){
+      const c = state.options.map(() => 0);
+      entries.choice.forEach(e => { if (e.choice < c.length) c[e.choice]++; });
+      return c;
+    }
+    function buildChoice(){
+      $('mc').innerHTML = state.options.map((o, i) => `
+        <div class="mc-row${state.correct === i ? ' correct' : ''}" style="--c:${OPT_COLORS[i]}">
+          <button class="mc-letter" data-correct="${i}" title="點擊標示／取消正確答案">${LETTERS[i]}</button>
+          <div>
+            <input class="mc-text" data-opt="${i}" value="${esc(o)}" placeholder="點此輸入選項 ${LETTERS[i]}" maxlength="60">
+            <div class="mc-bar"><i></i></div>
+          </div>
+          <div class="mc-num"><b>0</b><span>0%</span></div>
+        </div>`).join('');
+      $('mcAdd').disabled = state.options.length >= 6;
+      $('mcDel').disabled = state.options.length <= 2;
+      updateChoice();
+    }
+    function updateChoice(){
+      const cnt = choiceCounts(), tot = entries.choice.length;
+      const max = Math.max(...cnt, 1);
+      document.querySelectorAll('#mc .mc-row').forEach((row, i) => {
+        const pct = tot ? Math.round(cnt[i] / tot * 100) : 0;
+        row.querySelector('.mc-bar i').style.width = state.hideResults ? '0%' : (cnt[i] / max * 100) + '%';
+        row.querySelector('.mc-num b').textContent = state.hideResults ? '—' : cnt[i];
+        row.querySelector('.mc-num span').textContent = state.hideResults ? '已隱藏' : pct + '%';
+      });
+    }
+    let optTimer;
+    $('mc').addEventListener('input', e => {
+      const i = e.target.dataset.opt; if (i === undefined) return;
+      state.options[+i] = e.target.value;
+      clearTimeout(optTimer); optTimer = setTimeout(broadcast, 300);
+    });
+    $('mc').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.dataset.opt !== undefined) e.target.blur(); });
+    $('mc').addEventListener('click', e => {
+      const b = e.target.closest('[data-correct]'); if (!b) return;
+      const i = +b.dataset.correct;
+      state.correct = state.correct === i ? -1 : i;
+      document.querySelectorAll('#mc .mc-row').forEach((row, k) => row.classList.toggle('correct', k === state.correct));
+      broadcast();
+    });
+    $('mcAdd').addEventListener('click', () => {
+      if (state.options.length >= 6) return;
+      state.options.push(''); buildChoice(); broadcast();
+      const inputs = document.querySelectorAll('#mc .mc-text'); inputs[inputs.length - 1].focus();
+    });
+    $('mcDel').addEventListener('click', () => {
+      if (state.options.length <= 2) return;
+      const last = state.options.length - 1;
+      const lost = entries.choice.filter(e => e.choice === last);
+      if (lost.length && !confirm('選項 ' + LETTERS[last] + ' 已有 ' + lost.length + ' 票，移除後這些票會一併刪除。確定？')) return;
+      lost.forEach(e => submitted.choice.delete(e.cid));
+      entries.choice = entries.choice.filter(e => e.choice !== last);
+      state.options.pop();
+      if (state.correct === last) state.correct = -1;
+      buildChoice(); broadcast(); render();
+    });
+    $('mcHide').addEventListener('click', () => {
+      state.hideResults = !state.hideResults;
+      $('mcHide').classList.toggle('on', state.hideResults);
+      $('mcHide').textContent = state.hideResults ? '顯示結果' : '隱藏結果';
+      updateChoice();
+    });
+    $('mcNext').addEventListener('click', () => {
+      if (entries.choice.length && !confirm('清空目前 ' + entries.choice.length + ' 票，開始下一題？（建議先匯出 CSV）')) return;
+      clearMode('choice');
+      $('question').focus();
+      document.getSelection().selectAllChildren($('question'));
+    });
+
     let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => render(true), 200); });
     window.addEventListener('beforeunload', e => { if (entries.wordcloud.length || entries.opentext.length) { e.preventDefault(); e.returnValue = ''; } });
 
@@ -475,7 +615,8 @@
     let cid = store.get('otwc-cid');
     if (!cid) { cid = Math.random().toString(36).slice(2) + Date.now().toString(36); store.set('otwc-cid', cid); }
 
-    let st = null, conn = null, peer = null, sending = false, retries = 0;
+    let st = null, conn = null, peer = null, sending = false, retries = 0, sel = -1, pendingPick = -1;
+    const pickKey = () => `otwc-pick-${code}`;
     const doneKey = () => `otwc-done-${code}-${st && st.mode}`;
     const views = ['gConnecting','gForm','gLocked','gDone','gFail'];
     const show = id => views.forEach(v => $(v).classList.toggle('hidden', v !== id));
@@ -505,11 +646,13 @@
     function onData(d){
       if (!d) return;
       if (d.type === 'state') { const modeChanged = !st || st.mode !== d.mode; st = d; paint(modeChanged); }
-      else if (d.type === 'reset') { try { localStorage.removeItem(`otwc-done-${code}-${d.mode}`); } catch(e){} paint(false); }
+      else if (d.type === 'reset') { try { localStorage.removeItem(`otwc-done-${code}-${d.mode}`); if (d.mode === 'choice') localStorage.removeItem(pickKey()); } catch(e){} sel = -1; paint(false); }
       else if (d.type === 'ack') {
         sending = false; $('gSend').disabled = false; $('gSend').textContent = '送出';
         if (d.ok) {
-          $('gInput').value = ''; updateCount();
+          $('gInput').value = '';
+          if (st.mode === 'choice') { store.set(pickKey(), String(pendingPick)); sel = -1; renderGuestChoices(); }
+          updateCount();
           if (!st.multi) { store.set(doneKey(), '1'); show('gDone'); }
           else msg('已送出！可以繼續輸入 ✨', 'ok');
         } else {
@@ -531,19 +674,48 @@
         inp.placeholder = st.mode === 'opentext' ? '輸入你的想法…' : '輸入一個詞或短語…';
         $('gHint').textContent = st.mode === 'opentext' ? '可輸入多行文字' : '建議簡短，相同詞會合併';
         $('gNameWrap').classList.toggle('hidden', st.mode !== 'opentext');
+        $('gTextWrap').classList.toggle('hidden', st.mode === 'choice');
+        $('gChoices').classList.toggle('hidden', st.mode !== 'choice');
+        sel = -1;
         $('gMsg').textContent = '';
         updateCount();
       }
+      if (st.mode === 'choice') renderGuestChoices();
+      $('gAnswer').innerHTML = answerHtml();
       if (st.locked) return show('gLocked');
       if (!st.multi && store.get(doneKey())) return show('gDone');
       show('gForm');
     }
+    function renderGuestChoices(){
+      const opts = st.options || [];
+      if (sel >= opts.length) sel = -1;
+      $('gChoices').innerHTML = opts.map((o, i) =>
+        `<button class="g-opt${sel === i ? ' sel' : ''}" data-i="${i}" style="--c:${OPT_COLORS[i]}"><b>${LETTERS[i]}</b><span>${esc(o || '選項 ' + LETTERS[i])}</span></button>`).join('');
+      updateCount();
+    }
+    function answerHtml(){
+      if (!st || st.mode !== 'choice') return '';
+      const mine = parseInt(store.get(pickKey()), 10);
+      let h = '';
+      if (mine >= 0) h += '你選了 <b>' + LETTERS[mine] + '</b>';
+      if (st.correct >= 0) {
+        h += (h ? '<br>' : '') + '正確答案：<b>' + LETTERS[st.correct] + '</b>';
+        if (mine >= 0) h += mine === st.correct ? '　<span class="right">答對了 🎉</span>' : '　<span class="wrong">再接再厲</span>';
+      }
+      return h;
+    }
+    $('gChoices').addEventListener('click', e => {
+      const b = e.target.closest('[data-i]'); if (!b) return;
+      sel = +b.dataset.i;
+      document.querySelectorAll('#gChoices .g-opt').forEach((x, i) => x.classList.toggle('sel', i === sel));
+      updateCount();
+    });
 
     function msg(t, cls){ const m = $('gMsg'); m.textContent = t; m.className = 'g-msg ' + cls; clearTimeout(m._h); m._h = setTimeout(() => m.textContent = '', 2500); }
     function updateCount(){
       const v = $('gInput').value, max = st ? st.max : 0;
       $('gCount').textContent = v.length + '/' + max;
-      $('gSend').disabled = sending || !v.trim();
+      $('gSend').disabled = sending || (st && st.mode === 'choice' ? sel < 0 : !v.trim());
     }
     $('gName').value = store.get('otwc-name') || '';
     $('gInput').addEventListener('input', updateCount);
@@ -552,12 +724,14 @@
     });
     $('gSend').addEventListener('click', submit);
     function submit(){
-      const text = $('gInput').value.trim();
-      if (!text || sending || !conn || !conn.open) return;
+      const isChoice = st && st.mode === 'choice';
+      const text = isChoice ? '' : $('gInput').value.trim();
+      if ((isChoice ? sel < 0 : !text) || sending || !conn || !conn.open) return;
+      pendingPick = sel;
       sending = true; $('gSend').disabled = true; $('gSend').textContent = '送出中…';
       const name = st.mode === 'opentext' ? $('gName').value.trim() : '';
       if (st.mode === 'opentext') store.set('otwc-name', name);
-      conn.send({ type: 'submit', text, name, cid, mode: st.mode });
+      conn.send(isChoice ? { type: 'submit', choice: sel, cid, mode: st.mode } : { type: 'submit', text, name, cid, mode: st.mode });
       setTimeout(() => { if (sending) { sending = false; updateCount(); $('gSend').textContent = '送出'; msg('沒有回應，請再試一次', 'err'); } }, 6000);
     }
 

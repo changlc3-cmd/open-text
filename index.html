@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>即時互動：任意文字 × 文字雲</title>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/wordcloud@1.2.2/src/wordcloud2.js"></script>
+<style>
+  :root{
+    --bg:#f4f5f8; --panel:#ffffff; --ink:#1b1e2b; --muted:#6b7187; --line:#e3e6ee;
+    --accent:#2f5bff; --accent-ink:#ffffff; --accent-soft:#e8edff;
+    --danger:#e5484d; --ok:#1f9d55; --warn:#b7791f;
+    --radius:14px; --shadow:0 1px 2px rgba(20,24,40,.06),0 4px 16px rgba(20,24,40,.06);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  button{font:inherit;cursor:pointer}
+  .hidden{display:none !important}
+
+  /* ---------- 主控端 ---------- */
+  #host{display:flex;flex-direction:column;height:100vh}
+  header{display:flex;align-items:center;gap:16px;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .brand{font-weight:800;letter-spacing:.06em;font-size:15px;display:flex;align-items:center;gap:8px}
+  .live-dot{width:9px;height:9px;border-radius:50%;background:var(--muted)}
+  .live-dot.on{background:var(--ok);box-shadow:0 0 0 4px rgba(31,157,85,.15)}
+  .seg{display:inline-flex;background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:4px;margin:0 auto}
+  .seg button{border:0;background:transparent;padding:8px 20px;border-radius:999px;font-weight:700;color:var(--muted);font-size:15px}
+  .seg button.active{background:var(--accent);color:var(--accent-ink);box-shadow:var(--shadow)}
+  .toggles{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:7px 14px;font-size:13px;font-weight:600;color:var(--ink)}
+  .chip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+  .chip.lock.on{background:#fdecec;border-color:var(--danger);color:var(--danger)}
+
+  main{flex:1;display:grid;grid-template-columns:1fr 300px;gap:16px;padding:16px;min-height:0}
+  .stage{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .q{padding:20px 24px 8px;font-size:clamp(20px,2.4vw,34px);font-weight:800;outline:none;border-bottom:1px dashed transparent}
+  .q:focus{border-bottom-color:var(--line)}
+  .q:empty:before{content:attr(data-ph);color:#b6bbca}
+  .q-hint{padding:0 24px 8px;color:var(--muted);font-size:13px}
+  .viz{flex:1;position:relative;min-height:0}
+  #cloudBox{position:absolute;inset:0}
+  #cloud{width:100%;height:100%;display:block}
+  .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:#a7adbf;font-size:18px;pointer-events:none}
+  .empty b{font-size:48px;line-height:1}
+  #textBox{position:absolute;inset:0;overflow:auto;padding:12px 20px 24px}
+  .cards{columns:3 260px;column-gap:14px}
+  .card{break-inside:avoid;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:14px 16px 10px;margin:0 0 14px;position:relative;animation:pop .35s ease}
+  .card p{margin:0 0 8px;font-size:clamp(15px,1.4vw,20px);line-height:1.5;white-space:pre-wrap;word-break:break-word}
+  .card small{color:var(--muted);font-size:12px;display:flex;justify-content:space-between;gap:8px}
+  .card .who{font-weight:700;color:var(--ink)}
+  .card .who.anon{font-weight:500;color:var(--muted)}
+  .card .x{position:absolute;top:6px;right:8px;border:0;background:transparent;color:#b6bbca;font-size:18px;line-height:1;padding:4px;opacity:0;transition:.15s}
+  .card:hover .x{opacity:1}
+  .card .x:hover{color:var(--danger)}
+  .card.pin{background:var(--accent-soft);border-color:var(--accent)}
+  @keyframes pop{from{transform:scale(.92);opacity:0}to{transform:none;opacity:1}}
+
+  aside{display:flex;flex-direction:column;gap:12px;min-height:0;overflow:auto}
+  .box{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
+  .qr-wrap{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}
+  #qr:empty{width:242px;height:242px}
+  #qr{background:#fff;padding:10px;border-radius:10px;border:1px solid var(--line);line-height:0}
+  #qr img,#qr canvas{width:220px !important;height:220px !important}
+  .label{font-size:11px;letter-spacing:.14em;color:var(--muted);font-weight:700}
+  .code{font-size:40px;font-weight:900;letter-spacing:.12em;font-family:ui-monospace,Menlo,Consolas,monospace}
+  .url{font-size:12px;color:var(--muted);word-break:break-all;cursor:pointer}
+  .url:hover{color:var(--accent)}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;text-align:center}
+  .stats b{display:block;font-size:30px;font-weight:900}
+  .stats span{font-size:12px;color:var(--muted)}
+  .actions{display:flex;flex-direction:column;gap:8px}
+  .btn{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:10px 12px;font-weight:600;text-align:left}
+  .btn:hover{border-color:var(--accent);color:var(--accent)}
+  .btn.danger:hover{border-color:var(--danger);color:var(--danger)}
+  .tip{font-size:12px;color:var(--muted);line-height:1.6}
+  .warn{background:#fff7e6;border:1px solid #f3d9a4;color:var(--warn);font-size:12px;border-radius:10px;padding:10px;line-height:1.6}
+  #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:999px;font-size:14px;opacity:0;transition:.25s;pointer-events:none;z-index:9}
+  #toast.show{opacity:1}
+
+  /* 全螢幕：隱藏側欄，只留舞台＋小 QR */
+  body.fs main{grid-template-columns:1fr 200px}
+  body.fs aside .hide-fs{display:none}
+  body.fs #qr img,body.fs #qr canvas{width:160px !important;height:160px !important}
+  body.fs .code{font-size:30px}
+
+  @media (max-width:860px){
+    main{grid-template-columns:1fr;grid-template-rows:60vh auto}
+    .seg{margin:0}
+  }
+
+  /* ---------- 參與者端 ---------- */
+  #guest{min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px}
+  .g-card{width:100%;max-width:480px;background:var(--panel);border-radius:18px;box-shadow:var(--shadow);padding:22px}
+  .g-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+  .g-room{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:800;letter-spacing:.1em;color:var(--muted);font-size:13px}
+  .g-mode{font-size:12px;font-weight:700;color:var(--accent);background:var(--accent-soft);padding:4px 10px;border-radius:999px}
+  .g-q{font-size:22px;font-weight:800;line-height:1.4;margin:6px 0 16px}
+  .g-input{width:100%;border:2px solid var(--line);border-radius:12px;padding:14px;font:inherit;font-size:18px;outline:none;resize:none;background:#fff;color:var(--ink)}
+  .g-input:focus,.g-name:focus{border-color:var(--accent)}
+  .g-name{width:100%;border:2px solid var(--line);border-radius:12px;padding:10px 14px;font:inherit;font-size:16px;outline:none;background:#fff;color:var(--ink);margin-bottom:10px}
+  .g-label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:0 2px 6px}
+  .g-meta{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin:6px 2px 14px}
+  .g-send{width:100%;border:0;border-radius:12px;padding:14px;font-size:17px;font-weight:800;background:var(--accent);color:#fff}
+  .g-send:disabled{opacity:.45;cursor:not-allowed}
+  .g-status{text-align:center;padding:26px 6px;color:var(--muted);font-size:16px;line-height:1.7}
+  .g-status b{display:block;font-size:42px;margin-bottom:6px}
+  .g-msg{min-height:22px;text-align:center;font-size:14px;margin-top:10px}
+  .g-msg.ok{color:var(--ok)} .g-msg.err{color:var(--danger)}
+</style>
+</head>
+<body>
+
+<!-- =============== 主控端 =============== -->
+<div id="host" class="hidden">
+  <header>
+    <div class="brand"><span class="live-dot" id="liveDot"></span>LIVE POLL</div>
+    <div class="seg" role="tablist">
+      <button data-mode="opentext">任意文字 Open Text</button>
+      <button data-mode="wordcloud" class="active">文字雲 Word Cloud</button>
+    </div>
+    <div class="toggles">
+      <button class="chip" id="tMulti">允許多次送出</button>
+      <button class="chip lock" id="tLock">鎖定（暫停作答）</button>
+      <button class="chip" id="tFs">全螢幕</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="stage">
+      <div class="q" id="question" contenteditable="true" spellcheck="false" data-ph="點此輸入題目…"></div>
+      <div class="q-hint hide-fs" id="qHint">題目可直接點擊編輯，參與者手機會同步更新。</div>
+      <div class="viz">
+        <div id="cloudBox"><canvas id="cloud"></canvas></div>
+        <div id="textBox" class="hidden"><div class="cards" id="cards"></div></div>
+        <div class="empty" id="empty"><b>⌁</b>等待參與者掃描 QR Code 作答…</div>
+      </div>
+    </section>
+
+    <aside>
+      <div class="box qr-wrap">
+        <div id="qr"></div>
+        <div class="label">ROOM CODE</div>
+        <div class="code" id="code">----</div>
+        <div class="url hide-fs" id="joinUrl" title="點擊複製連結">建立房間中…</div>
+      </div>
+      <div class="box stats">
+        <div><b id="nResp">0</b><span>回覆數</span></div>
+        <div><b id="nOnline">0</b><span>連線中</span></div>
+      </div>
+      <div class="box actions hide-fs">
+        <button class="btn" id="bPng">⬇ 下載截圖（PNG）</button>
+        <button class="btn" id="bCsv">⬇ 匯出 CSV</button>
+        <button class="btn danger" id="bClear">⟲ 清除目前模式的回覆</button>
+        <button class="btn" id="bNew">✦ 開新房間（新 QR Code）</button>
+      </div>
+      <div class="box tip hide-fs" id="tip"></div>
+      <div class="warn hidden" id="fileWarn">⚠ 目前是以本機檔案（file://）開啟，手機掃 QR Code 會打不開。請把這個 HTML 放到任一靜態網站（如 GitHub Pages、Netlify）上再開啟。</div>
+    </aside>
+  </main>
+</div>
+
+<!-- =============== 參與者端 =============== -->
+<div id="guest" class="hidden">
+  <div class="g-card">
+    <div class="g-top">
+      <span class="g-room" id="gRoom">ROOM ----</span>
+      <span class="g-mode hidden" id="gMode"></span>
+    </div>
+    <div id="gConnecting" class="g-status"><b>⏳</b>連線中…</div>
+    <div id="gForm" class="hidden">
+      <div class="g-q" id="gQ"></div>
+      <div id="gNameWrap" class="hidden">
+        <label class="g-label" for="gName">暱稱（選填）</label>
+        <input class="g-name" id="gName" maxlength="20" placeholder="不填則顯示為「匿名」" autocomplete="nickname">
+        <label class="g-label" for="gInput">你的回覆</label>
+      </div>
+      <textarea class="g-input" id="gInput" rows="1"></textarea>
+      <div class="g-meta"><span id="gHint"></span><span id="gCount">0/0</span></div>
+      <button class="g-send" id="gSend" disabled>送出</button>
+      <div class="g-msg" id="gMsg"></div>
+    </div>
+    <div id="gLocked" class="g-status hidden"><b>🔒</b>主持人暫停作答中<br>請稍候…</div>
+    <div id="gDone" class="g-status hidden"><b>✅</b>已收到你的回覆，謝謝！<br>請看大螢幕。</div>
+    <div id="gFail" class="g-status hidden"><b>⚠️</b><span id="gFailText">找不到這個房間，請確認 QR Code 或房間代碼。</span></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(() => {
+  'use strict';
+  const PREFIX = 'otwc-room-';           // PeerJS ID 前綴，避免和別人撞號
+  const LIMIT = { wordcloud: 20, opentext: 200 };
+  const MODE_NAME = { wordcloud: '文字雲', opentext: '任意文字' };
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const toast = msg => { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 1800); };
+  const store = {
+    get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+    set(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+  };
+
+  const params = new URLSearchParams(location.search);
+  const room = (params.get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (room) startGuest(room); else startHost();
+
+  /* ================================================================
+   *  主控端
+   * ================================================================ */
+  function startHost(){
+    $('host').classList.remove('hidden');
+    if (location.protocol === 'file:') $('fileWarn').classList.remove('hidden');
+
+    const state = {
+      mode: 'wordcloud',
+      questions: { wordcloud: '用一個詞形容今天的心情', opentext: '有什麼問題或想法想分享？' },
+      locked: false,
+      multi: false
+    };
+    const entries = { wordcloud: [], opentext: [] };
+    const submitted = { wordcloud: new Set(), opentext: new Set() };
+    const conns = new Set();
+    let peer = null, code = '', seq = 0;
+
+    /* ---------- 房間 / Peer ---------- */
+    function genCode(){
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let s = ''; for (let i = 0; i < 5; i++) s += chars[Math.floor(Math.random() * chars.length)];
+      return s;
+    }
+    function openRoom(){
+      if (peer) { try { peer.destroy(); } catch(e){} }
+      conns.clear(); updateOnline();
+      code = genCode();
+      $('code').textContent = '----';
+      $('joinUrl').textContent = '建立房間中…';
+      $('liveDot').classList.remove('on');
+      peer = new Peer(PREFIX + code);
+      peer.on('open', () => {
+        $('code').textContent = code;
+        $('liveDot').classList.add('on');
+        const url = location.origin + location.pathname + '?room=' + code;
+        $('joinUrl').textContent = url;
+        $('joinUrl').dataset.url = url;
+        $('qr').innerHTML = '';
+        new QRCode($('qr'), { text: url, width: 440, height: 440, correctLevel: QRCode.CorrectLevel.M });
+      });
+      peer.on('connection', conn => {
+        conn.on('open', () => { conns.add(conn); updateOnline(); sendState(conn); });
+        conn.on('data', d => onGuestData(conn, d));
+        conn.on('close', () => { conns.delete(conn); updateOnline(); });
+        conn.on('error', () => { conns.delete(conn); updateOnline(); });
+      });
+      peer.on('disconnected', () => { $('liveDot').classList.remove('on'); setTimeout(() => { try { peer.reconnect(); } catch(e){} }, 1000); });
+      peer.on('error', err => {
+        if (err.type === 'unavailable-id') openRoom();            // 代碼撞號，重抽
+        else if (err.type === 'network' || err.type === 'server-error') { toast('連線伺服器失敗，重試中…'); setTimeout(openRoom, 3000); }
+      });
+    }
+    function updateOnline(){ $('nOnline').textContent = conns.size; }
+
+    function publicState(){
+      return { type: 'state', mode: state.mode, question: state.questions[state.mode], locked: state.locked, multi: state.multi, max: LIMIT[state.mode] };
+    }
+    function sendState(conn){ if (conn.open) conn.send(publicState()); }
+    function broadcast(){ const s = publicState(); conns.forEach(c => { if (c.open) c.send(s); }); }
+
+    function onGuestData(conn, d){
+      if (!d || d.type !== 'submit') return;
+      const mode = state.mode;
+      const reply = (ok, reason) => conn.open && conn.send({ type: 'ack', ok, reason, mode });
+      if (state.locked) return reply(false, 'locked');
+      if (d.mode && d.mode !== mode) { sendState(conn); return reply(false, 'mode'); }
+      let text = String(d.text || '').replace(/\s+/g, ' ').trim();
+      if (mode === 'opentext') text = String(d.text || '').trim().replace(/\n{3,}/g, '\n\n');
+      if (!text) return reply(false, 'empty');
+      text = text.slice(0, LIMIT[mode]);
+      const cid = String(d.cid || conn.peer);
+      if (!state.multi && submitted[mode].has(cid)) return reply(false, 'already');
+      submitted[mode].add(cid);
+      const name = mode === 'opentext' ? String(d.name || '').replace(/\s+/g, ' ').trim().slice(0, 20) : '';
+      entries[mode].push({ id: ++seq, text, name, cid, t: Date.now() });
+      reply(true);
+      render();
+    }
+
+    /* ---------- 介面 ---------- */
+    const segBtns = document.querySelectorAll('.seg button');
+    segBtns.forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+    function setMode(m){
+      state.mode = m;
+      segBtns.forEach(b => b.classList.toggle('active', b.dataset.mode === m));
+      $('question').textContent = state.questions[m];
+      $('cloudBox').classList.toggle('hidden', m !== 'wordcloud');
+      $('textBox').classList.toggle('hidden', m !== 'opentext');
+      $('bPng').classList.toggle('hidden', m !== 'wordcloud');
+      $('tip').innerHTML = m === 'wordcloud'
+        ? '💡 點擊文字雲上的詞即可刪除該詞。相同的詞（不分大小寫）會合併計數，次數越多字越大。每則限 ' + LIMIT.wordcloud + ' 字。'
+        : '💡 滑過卡片按 × 可刪除，點卡片可標記重點。每則限 ' + LIMIT.opentext + ' 字。';
+      broadcast(); render(true);
+    }
+
+    let qTimer;
+    $('question').addEventListener('input', () => {
+      state.questions[state.mode] = $('question').textContent.trim();
+      clearTimeout(qTimer); qTimer = setTimeout(broadcast, 300);
+    });
+    $('question').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
+
+    $('tMulti').addEventListener('click', () => { state.multi = !state.multi; $('tMulti').classList.toggle('on', state.multi); broadcast(); });
+    $('tLock').addEventListener('click', () => {
+      state.locked = !state.locked;
+      $('tLock').classList.toggle('on', state.locked);
+      $('tLock').textContent = state.locked ? '已鎖定（點此開放）' : '鎖定（暫停作答）';
+      broadcast();
+    });
+    $('tFs').addEventListener('click', () => {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen().catch(() => toast('瀏覽器不支援全螢幕'));
+    });
+    document.addEventListener('fullscreenchange', () => {
+      const on = !!document.fullscreenElement;
+      document.body.classList.toggle('fs', on);
+      $('tFs').textContent = on ? '離開全螢幕' : '全螢幕';
+      $('tFs').classList.toggle('on', on);
+      setTimeout(() => render(true), 150);
+    });
+    $('joinUrl').addEventListener('click', () => {
+      const u = $('joinUrl').dataset.url; if (!u) return;
+      navigator.clipboard.writeText(u).then(() => toast('已複製參與連結'), () => toast(u));
+    });
+
+    $('bClear').addEventListener('click', () => {
+      if (!confirm('確定清除「' + MODE_NAME[state.mode] + '」的所有回覆？')) return;
+      entries[state.mode] = []; submitted[state.mode].clear();
+      conns.forEach(c => c.open && c.send({ type: 'reset', mode: state.mode }));
+      render(true);
+    });
+    $('bNew').addEventListener('click', () => {
+      if (!confirm('開新房間會產生新的 QR Code，目前的參與者需要重新掃描。確定？')) return;
+      openRoom();
+    });
+    $('bCsv').addEventListener('click', () => {
+      const m = state.mode, rows = [m === 'opentext' ? ['模式','題目','時間','暱稱','內容'] : ['模式','題目','時間','內容']];
+      const q = state.questions[m];
+      entries[m].forEach(e => rows.push(m === 'opentext'
+        ? [MODE_NAME[m], q, new Date(e.t).toLocaleString('zh-TW'), e.name || '匿名', e.text]
+        : [MODE_NAME[m], q, new Date(e.t).toLocaleString('zh-TW'), e.text]));
+      if (m === 'wordcloud') {
+        rows.push([]); rows.push(['詞彙','次數']);
+        wordCounts().forEach(([w, n]) => rows.push([w, n]));
+      }
+      const csv = '﻿' + rows.map(r => r.map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(',')).join('\r\n');
+      download(new Blob([csv], { type: 'text/csv;charset=utf-8' }), fileName('csv'));
+    });
+    $('bPng').addEventListener('click', () => {
+      const src = $('cloud');
+      const out = document.createElement('canvas');
+      const pad = 40 * dpr(), titleH = 90 * dpr();
+      out.width = src.width + pad * 2; out.height = src.height + titleH + pad;
+      const g = out.getContext('2d');
+      g.fillStyle = '#fff'; g.fillRect(0, 0, out.width, out.height);
+      g.fillStyle = '#1b1e2b'; g.font = `800 ${32 * dpr()}px "Noto Sans TC","Microsoft JhengHei",sans-serif`;
+      g.fillText(state.questions.wordcloud || '', pad, pad + 32 * dpr());
+      g.drawImage(src, pad, titleH);
+      out.toBlob(b => download(b, fileName('png')));
+    });
+    function fileName(ext){ const d = new Date(); return `${MODE_NAME[state.mode]}_${code}_${d.getMonth()+1}-${d.getDate()}_${d.getHours()}${String(d.getMinutes()).padStart(2,'0')}.${ext}`; }
+    function download(blob, name){ const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
+
+    /* ---------- 繪製 ---------- */
+    const dpr = () => Math.min(window.devicePixelRatio || 1, 2);
+    function normalize(w){ return w.trim().toLowerCase(); }
+    function wordCounts(){
+      const map = new Map();
+      entries.wordcloud.forEach(e => {
+        const k = normalize(e.text);
+        const cur = map.get(k);
+        if (cur) cur[1]++; else map.set(k, [e.text, 1]);
+      });
+      return [...map.values()].sort((a, b) => b[1] - a[1]);
+    }
+
+    let rTimer, lastCloudKey = '';
+    function render(force){
+      const m = state.mode, n = entries[m].length;
+      $('nResp').textContent = n;
+      $('empty').classList.toggle('hidden', n > 0);
+      if (m === 'opentext') renderCards();
+      else { clearTimeout(rTimer); rTimer = setTimeout(() => renderCloud(force), force ? 0 : 250); }
+    }
+
+    const PALETTE = ['#2f5bff','#e5484d','#1f9d55','#f59e0b','#8b5cf6','#0ea5e9','#db2777','#14b8a6','#ea580c','#4f46e5'];
+    function renderCloud(force){
+      const cv = $('cloud'), box = $('cloudBox');
+      const w = box.clientWidth, h = box.clientHeight;
+      if (!w || !h) return;
+      const list = wordCounts();
+      const key = w + 'x' + h + '|' + list.map(x => x.join(':')).join('|');
+      if (!force && key === lastCloudKey) return;
+      lastCloudKey = key;
+      const r = dpr();
+      cv.width = w * r; cv.height = h * r;
+      if (!list.length) { cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); return; }
+      const max = list[0][1];
+      const base = Math.min(w, h);
+      const maxSize = Math.min(base / 4.2, 150) * r;
+      const minSize = Math.max(base / 22, 16) * r;
+      const data = list.map(([word, c]) => {
+        const t = max === 1 ? 0.4 : (c - 1) / (max - 1);
+        return [word, minSize + (maxSize - minSize) * Math.sqrt(t)];
+      });
+      WordCloud(cv, {
+        list: data,
+        weightFactor: 1,
+        fontFamily: '"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif',
+        fontWeight: 800,
+        color: (word) => PALETTE[Math.abs(hash(normalize(word))) % PALETTE.length],
+        backgroundColor: 'rgba(0,0,0,0)',
+        rotateRatio: 0.15,
+        rotationSteps: 2,
+        gridSize: Math.round(6 * r),
+        shrinkToFit: true,
+        drawOutOfBound: false,
+        shuffle: false,
+        click: (item) => {
+          if (!item) return;
+          const k = normalize(item[0]);
+          if (!confirm('刪除「' + item[0] + '」？')) return;
+          entries.wordcloud = entries.wordcloud.filter(e => normalize(e.text) !== k);
+          render(true);
+        },
+        hover: (item) => { cv.style.cursor = item ? 'pointer' : 'default'; }
+      });
+    }
+    function hash(s){ let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
+
+    const pinned = new Set();
+    function renderCards(){
+      const box = $('cards');
+      const list = entries.opentext.slice().reverse();
+      box.innerHTML = list.map(e => `
+        <div class="card${pinned.has(e.id) ? ' pin' : ''}" data-id="${e.id}">
+          <button class="x" data-del="${e.id}" title="刪除">×</button>
+          <p>${esc(e.text)}</p>
+          <small><span class="who${e.name ? '' : ' anon'}">${e.name ? esc(e.name) : '匿名'}</span><span>${new Date(e.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}</span></small>
+        </div>`).join('');
+    }
+    $('cards').addEventListener('click', e => {
+      const del = e.target.closest('[data-del]');
+      if (del) { const id = +del.dataset.del; entries.opentext = entries.opentext.filter(x => x.id !== id); render(); return; }
+      const card = e.target.closest('.card');
+      if (card) { const id = +card.dataset.id; pinned.has(id) ? pinned.delete(id) : pinned.add(id); card.classList.toggle('pin'); }
+    });
+
+    let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => render(true), 200); });
+    window.addEventListener('beforeunload', e => { if (entries.wordcloud.length || entries.opentext.length) { e.preventDefault(); e.returnValue = ''; } });
+
+    setMode('wordcloud');
+    openRoom();
+  }
+
+  /* ================================================================
+   *  參與者端
+   * ================================================================ */
+  function startGuest(code){
+    $('guest').classList.remove('hidden');
+    $('gRoom').textContent = 'ROOM ' + code;
+    document.title = '作答｜' + code;
+
+    let cid = store.get('otwc-cid');
+    if (!cid) { cid = Math.random().toString(36).slice(2) + Date.now().toString(36); store.set('otwc-cid', cid); }
+
+    let st = null, conn = null, peer = null, sending = false, retries = 0;
+    const doneKey = () => `otwc-done-${code}-${st && st.mode}`;
+    const views = ['gConnecting','gForm','gLocked','gDone','gFail'];
+    const show = id => views.forEach(v => $(v).classList.toggle('hidden', v !== id));
+
+    function connect(){
+      peer = new Peer();
+      peer.on('open', () => {
+        conn = peer.connect(PREFIX + code, { reliable: true });
+        const timer = setTimeout(() => { if (!conn.open) fail(); }, 9000);
+        conn.on('open', () => { clearTimeout(timer); retries = 0; });
+        conn.on('data', onData);
+        conn.on('close', () => reconnect());
+      });
+      peer.on('error', err => {
+        if (err.type === 'peer-unavailable') fail('找不到這個房間（可能已關閉），請確認 QR Code 或房間代碼。');
+        else reconnect();
+      });
+    }
+    function reconnect(){
+      show('gConnecting');
+      if (retries++ > 5) return fail('連線中斷，請重新整理頁面。');
+      try { peer && peer.destroy(); } catch(e){}
+      setTimeout(connect, 1500);
+    }
+    function fail(msg){ if (msg) $('gFailText').textContent = msg; show('gFail'); }
+
+    function onData(d){
+      if (!d) return;
+      if (d.type === 'state') { const modeChanged = !st || st.mode !== d.mode; st = d; paint(modeChanged); }
+      else if (d.type === 'reset') { try { localStorage.removeItem(`otwc-done-${code}-${d.mode}`); } catch(e){} paint(false); }
+      else if (d.type === 'ack') {
+        sending = false; $('gSend').disabled = false; $('gSend').textContent = '送出';
+        if (d.ok) {
+          $('gInput').value = ''; updateCount();
+          if (!st.multi) { store.set(doneKey(), '1'); show('gDone'); }
+          else msg('已送出！可以繼續輸入 ✨', 'ok');
+        } else {
+          const why = { locked: '主持人已暫停作答', already: '你已經送出過了', empty: '請先輸入內容', mode: '題目已切換，請重新作答' }[d.reason] || '送出失敗';
+          if (d.reason === 'already') { store.set(doneKey(), '1'); show('gDone'); } else msg(why, 'err');
+        }
+      }
+    }
+
+    function paint(modeChanged){
+      if (!st) return;
+      $('gMode').textContent = MODE_NAME[st.mode];
+      $('gMode').classList.remove('hidden');
+      $('gQ').textContent = st.question || '請輸入你的回覆';
+      if (modeChanged) {
+        const inp = $('gInput');
+        inp.maxLength = st.max;
+        inp.rows = st.mode === 'opentext' ? 4 : 1;
+        inp.placeholder = st.mode === 'opentext' ? '輸入你的想法…' : '輸入一個詞或短語…';
+        $('gHint').textContent = st.mode === 'opentext' ? '可輸入多行文字' : '建議簡短，相同詞會合併';
+        $('gNameWrap').classList.toggle('hidden', st.mode !== 'opentext');
+        $('gMsg').textContent = '';
+        updateCount();
+      }
+      if (st.locked) return show('gLocked');
+      if (!st.multi && store.get(doneKey())) return show('gDone');
+      show('gForm');
+    }
+
+    function msg(t, cls){ const m = $('gMsg'); m.textContent = t; m.className = 'g-msg ' + cls; clearTimeout(m._h); m._h = setTimeout(() => m.textContent = '', 2500); }
+    function updateCount(){
+      const v = $('gInput').value, max = st ? st.max : 0;
+      $('gCount').textContent = v.length + '/' + max;
+      $('gSend').disabled = sending || !v.trim();
+    }
+    $('gName').value = store.get('otwc-name') || '';
+    $('gInput').addEventListener('input', updateCount);
+    $('gInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey && st && st.mode === 'wordcloud') { e.preventDefault(); submit(); }
+    });
+    $('gSend').addEventListener('click', submit);
+    function submit(){
+      const text = $('gInput').value.trim();
+      if (!text || sending || !conn || !conn.open) return;
+      sending = true; $('gSend').disabled = true; $('gSend').textContent = '送出中…';
+      const name = st.mode === 'opentext' ? $('gName').value.trim() : '';
+      if (st.mode === 'opentext') store.set('otwc-name', name);
+      conn.send({ type: 'submit', text, name, cid, mode: st.mode });
+      setTimeout(() => { if (sending) { sending = false; updateCount(); $('gSend').textContent = '送出'; msg('沒有回應，請再試一次', 'err'); } }, 6000);
+    }
+
+    connect();
+  }
+})();
+</script>
+</body>
+</html>
